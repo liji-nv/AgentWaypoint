@@ -1856,7 +1856,7 @@ export default function HomePage() {
     };
   }, [mounted, authenticated, activeWorkspacePath, selectedProject?.backend, selectedSession?.meta]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = chatThreadRef.current;
     if (!container || !chatAtBottomRef.current) {
       return;

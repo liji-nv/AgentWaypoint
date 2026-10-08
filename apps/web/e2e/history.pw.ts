@@ -84,6 +84,28 @@ async function chatLayout(page: Page) {
   });
 }
 
+async function firstAssistantFrame(page: Page, selector: string) {
+  return page.evaluate(
+    (selector) => new Promise<{ opacity: string; bottomGap: number; text: string }>((resolve) => {
+      const inspect = () => {
+        const content = document.querySelector<HTMLElement>(selector);
+        if (!content) {
+          requestAnimationFrame(inspect);
+          return;
+        }
+        const thread = document.querySelector<HTMLElement>(".chat-thread")!;
+        resolve({
+          opacity: getComputedStyle(content.closest("article")!).opacity,
+          bottomGap: thread.scrollHeight - thread.clientHeight - thread.scrollTop,
+          text: content.textContent ?? "",
+        });
+      };
+      requestAnimationFrame(inspect);
+    }),
+    selector,
+  );
+}
+
 test("keeps live actions in an independent active bubble, floats steer inputs, and scopes timelines", async ({
   page,
 }) => {
@@ -121,11 +143,16 @@ test("keeps live actions in an independent active bubble, floats steer inputs, a
     "First draft",
   ]);
   const firstMessage = `First complete message\n\n${"Reviewing the current implementation. ".repeat(180)}`;
+  const firstWorkingFrame = firstAssistantFrame(page, ".chat-working-placeholder");
   await emit(page.request, "assistant.message.completed", {
     itemId: "a",
     text: firstMessage,
     phase: "commentary",
   });
+  const workingFrame = await firstWorkingFrame;
+  expect(workingFrame.opacity).toBe("1");
+  expect(workingFrame.bottomGap).toBeLessThanOrEqual(1);
+  expect(workingFrame.text).toBe("Thinking...");
   await expect(page.locator(".chat-markdown")).toHaveText([
     "Initial request",
     firstMessage,
@@ -305,7 +332,18 @@ test("keeps live actions in an independent active bubble, floats steer inputs, a
       .last()
       .getByRole("button", { name: "Live stream", exact: true }),
   ).toBeVisible();
+  const firstReplyFrame = firstAssistantFrame(
+    page,
+    ".chat-thread > .chat-message-row:last-child .chat-markdown",
+  );
   await emit(page.request, "assistant.message.started", { itemId: "b" });
+  const replyFrame = await firstReplyFrame;
+  expect(replyFrame.opacity).toBe("1");
+  expect(replyFrame.bottomGap).toBeLessThanOrEqual(1);
+  expect(replyFrame.text).toBe("Thinking...");
+  await page.locator(".chat-thread").hover();
+  await page.mouse.wheel(0, -10_000);
+  await expect.poll(async () => (await chatLayout(page)).scrollTop).toBe(0);
   await emit(page.request, "assistant.delta", {
     itemId: "b",
     text: "Second draft",
@@ -313,6 +351,7 @@ test("keeps live actions in an independent active bubble, floats steer inputs, a
   await expect(page.locator(".chat-markdown").last()).toHaveText(
     "Second draft",
   );
+  expect((await chatLayout(page)).scrollTop).toBe(0);
   await page.reload();
   await expect(page.locator(".chat-markdown")).toHaveText([
     "Initial request",
